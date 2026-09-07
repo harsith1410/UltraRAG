@@ -10,6 +10,9 @@ wheels/
 .venv
 .env
 /src/rag/test.py
+/src/rag/data
 
 credentials.json
 token.json
+/data
+
