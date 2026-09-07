@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Server
+  postgres:
+    image: postgres:16
+    container_name: my_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password12
+      POSTGRES_DB: rag
+    ports:
+      - "5432:5432"
+    volumes:
+      # Stores Postgres data in a Docker volume so it survives restarts
+      - pgdata:/var/lib/postgresql/data
+
+  # ChromaDB Server
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: my_chroma
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Explicitly enforces persistence to prevent silent in-memory fallbacks
+      - IS_PERSISTENT=TRUE
+    volumes:
+      # Maps your local ./chroma_db folder to the new default /data path
+      - ./chroma_db:/data
+
+volumes:
+  # Define the Postgres volume
+  pgdata:
