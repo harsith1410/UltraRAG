@@ -1,3 +1,4 @@
+import logging
 import os
 
 from rag.core.db import sessionLocal
@@ -10,6 +11,8 @@ from rag.core.dedupe import NearDuplicate
 from rag.core.ingest import ingest
 from rag.core.models_db import Documents
 from rag.sources.converters import UnsupportedFormat
+
+logger = logging.getLogger(__name__)
 
 creds = get_google_creds()
 drive_service = build('drive', 'v3', credentials=creds)
@@ -35,6 +38,8 @@ def list_drive_files(folder_id = "1A2PRgrWoCZ5q7JjEkuGqkSnIlciDLlwL", subject_id
 
     db.close()
 
+    logger.info("drive listing | folder=%s found=%d new=%d subject=%s",
+                FOLDER_ID, len(files), len(filtered_files), subject_id)
     return filtered_files
 
 def download_drive_file(file):
@@ -47,12 +52,15 @@ def download_drive_file(file):
     buffer.seek(0)
     os.makedirs('./data', exist_ok=True)
     file_loc = os.path.join('./data', f"{file['id']}_{file['name']}")
+    payload = buffer.read()
     with open(file_loc, 'wb') as f:
-        f.write(buffer.read())
+        f.write(payload)
 
+    logger.info("drive download | name=%s id=%s bytes=%d", file['name'], file['id'], len(payload))
     return file_loc
 
 def sync_drive_folder(folder_id, subject_id):
+    logger.info("drive sync start | folder=%s subject=%s", folder_id, subject_id)
     files = list_drive_files(folder_id, subject_id)
     results = []
     for file in files:
@@ -61,6 +69,7 @@ def sync_drive_folder(folder_id, subject_id):
             success, chunk_count, figure_count = ingest(file_loc, subject_id, gdrive_id=file['id'])
         except (NearDuplicate, UnsupportedFormat) as e:
             # one bad or duplicate file shouldn't abort the whole sync
+            logger.warning("drive file skipped | name=%s reason=%s", file['name'], e)
             results.append({"name": file['name'], "success": False, "chunks": None, "skipped": str(e)})
             continue
         results.append({
@@ -69,5 +78,9 @@ def sync_drive_folder(folder_id, subject_id):
             "chunks": chunk_count,
             "figures": figure_count,
         })
+
+    ingested = sum(1 for r in results if r.get("success"))
+    logger.info("drive sync done | folder=%s subject=%s ingested=%d skipped=%d",
+                folder_id, subject_id, ingested, len(results) - ingested)
     return results
 

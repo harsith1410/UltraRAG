@@ -1,7 +1,11 @@
 """Near-duplicate detection: catch re-uploads of the same material under a new filename."""
+import logging
+
 import numpy as np
 
 from rag.core.vector_db import embedding, returnchroma
+
+logger = logging.getLogger(__name__)
 
 SIMILARITY_THRESHOLD = 0.95
 MATCH_RATIO = 0.8
@@ -58,6 +62,8 @@ def find_near_duplicate(chunks: list, subject_id: int,
 
     hits = best_sim >= threshold
     matched = int(hits.sum())
+    logger.debug("dupe check | subject=%s sampled=%d matched=%d threshold=%.2f",
+                 subject_id, len(sampled), matched, threshold)
     if matched / len(sampled) < match_ratio:
         return None
 

@@ -1,5 +1,6 @@
 """Vision pass over extracted diagrams, so figures become searchable text."""
 import base64
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -7,6 +8,8 @@ from dotenv import load_dotenv
 from langchain_core.documents import Document
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 VISION_MODEL = os.getenv("VISION_MODEL", "gemini-flash-latest")
 MAX_IMAGES_PER_DOC = int(os.getenv("MAX_IMAGES_PER_DOC", "20"))
@@ -59,7 +62,7 @@ def describe_image(client, image: dict, context: str = "") -> str | None:
     try:
         text = client.invoke([message]).content
     except Exception as e:
-        print(f"vision failed for {image['id']}: {e}")
+        logger.warning("vision call failed | image=%s: %s", image["id"], e)
         return None
 
     if isinstance(text, list):
@@ -67,7 +70,9 @@ def describe_image(client, image: dict, context: str = "") -> str | None:
 
     text = (text or "").strip()
     if text.startswith(SKIP_TOKEN) or len(text) < MIN_DESCRIPTION_LEN:
+        logger.debug("figure skipped as low value | image=%s", image["id"])
         return None
+    logger.debug("figure described | image=%s chars=%d", image["id"], len(text))
     return text
 
 
@@ -88,7 +93,12 @@ def describe_images(images: list, source: str, file_hash: str,
         return []
 
     page_text = page_text or {}
+    total = len(images)
     images = images[:MAX_IMAGES_PER_DOC]
+    if total > len(images):
+        logger.warning("figure cap hit | source=%s extracted=%d describing=%d (MAX_IMAGES_PER_DOC)",
+                       source, total, len(images))
+    logger.info("vision pass start | source=%s figures=%d model=%s", source, len(images), VISION_MODEL)
     client = _client()
 
     def work(image):
@@ -99,7 +109,7 @@ def describe_images(images: list, source: str, file_hash: str,
         try:
             path = save_image(image, file_hash)
         except Exception as e:
-            print(f"could not save {image['id']}: {e}")
+            logger.warning("could not save figure | image=%s: %s", image["id"], e)
             path = ""
 
         return Document(
@@ -117,4 +127,7 @@ def describe_images(images: list, source: str, file_hash: str,
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         results = list(pool.map(work, images))
 
-    return [doc for doc in results if doc is not None]
+    kept = [doc for doc in results if doc is not None]
+    logger.info("vision pass done | source=%s kept=%d skipped=%d",
+                source, len(kept), len(results) - len(kept))
+    return kept

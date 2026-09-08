@@ -1,4 +1,5 @@
 """Google Calendar: list upcoming events and add new ones (deadlines, exams, revision blocks)."""
+import logging
 from datetime import datetime, timedelta, timezone
 
 from googleapiclient.discovery import build
@@ -10,6 +11,9 @@ DEFAULT_DAYS = 7
 DEFAULT_MAX_RESULTS = 20
 
 _service = None
+
+
+logger = logging.getLogger(__name__)
 
 
 def calendar_service():
@@ -52,6 +56,7 @@ def list_events(days: int = DEFAULT_DAYS, max_results: int = DEFAULT_MAX_RESULTS
             "link": event.get('htmlLink'),
         })
 
+    logger.info("calendar events listed | count=%d", len(events))
     return events
 
 
@@ -81,6 +86,8 @@ def create_event(summary: str, start: str, end: str = None,
         body["location"] = location
 
     event = calendar_service().events().insert(calendarId=CALENDAR_ID, body=body).execute()
+    logger.info("calendar event created | id=%s summary=%s start=%s",
+                event.get('id'), summary, start)
 
     return {
         "id": event.get('id'),

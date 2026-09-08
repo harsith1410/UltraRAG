@@ -1,4 +1,5 @@
 import json
+import logging
 
 import groq
 from dotenv import load_dotenv
@@ -6,6 +7,8 @@ from dotenv import load_dotenv
 from rag.core.chat import get_full_content, get_subject_name_for_docs, resolve_filenames
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 MODEL = "openai/gpt-oss-120b"
 CONTENT_CHAR_LIMIT = 60000
@@ -53,9 +56,11 @@ def parse_cards(raw: str) -> list:
 
 
 def generate_flashcards(doc_ids: list, count: int = 25) -> dict:
+    logger.info("flashcards requested | doc_ids=%s count=%d", doc_ids, count)
     doc_names = resolve_filenames(doc_ids)
     content = get_full_content(doc_names)
     if not content.strip():
+        logger.warning("flashcards aborted, no content | docs=%s", doc_names)
         return {"cards": [], "subject": "unknown", "deck": "unknown"}
 
     content = content[:CONTENT_CHAR_LIMIT]
@@ -70,6 +75,8 @@ def generate_flashcards(doc_ids: list, count: int = 25) -> dict:
     )
 
     cards = parse_cards(res.choices[0].message.content)
+    logger.info("flashcards generated | subject=%s cards=%d from %d document(s)",
+                subject_name, len(cards), len(doc_names))
 
     return {
         "cards": cards,

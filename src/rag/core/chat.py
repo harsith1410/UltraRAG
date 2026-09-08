@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from typing import AsyncGenerator
 import groq
@@ -10,6 +11,8 @@ from rag.core.db import sessionLocal
 from rag.core.models_db import Documents, Subject
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 def build_prompt(query: str, docs: list, history: list) -> tuple[str, dict]:
 
@@ -69,9 +72,20 @@ async def stream_completion(prompt: str, model: str) -> AsyncGenerator[str, None
 
 async def run_chat(message: str, subject_id: int, model: str) -> AsyncGenerator[tuple[str, ...], None]:
     docs = hybrid_search(message, subject_id)
+    logger.info("retrieval | subject=%s hits=%d figures=%d",
+                subject_id, len(docs),
+                sum(1 for d in docs if d.metadata.get('kind') == 'image'))
+
     prompt, citations = build_prompt(message,docs,history=[])
+    logger.debug("prompt built | subject=%s chars=%d sources=%s",
+                 subject_id, len(prompt), citations['sources'])
+
+    tokens = 0
     async for token in stream_completion(prompt, model):
+        tokens += 1
         yield ("token",token)
+    logger.info("chat complete | subject=%s model=%s tokens=%d sources=%d",
+                subject_id, model, tokens, len(citations['sources']))
     yield ("citations", citations)
 
 def resolve_filenames(doc_ids: list) -> list:
@@ -146,6 +160,7 @@ def build_notes_prompt(content: str) -> str:
     return prompt
 
 def generate_notes(doc_ids: list) -> str:
+    logger.info("notes requested | doc_ids=%s", doc_ids)
     doc_names = resolve_filenames(doc_ids)
     content = get_full_content(doc_names)
     prompt = build_notes_prompt(content)

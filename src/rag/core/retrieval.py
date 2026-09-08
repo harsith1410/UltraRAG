@@ -1,7 +1,11 @@
 import re
+import logging
+
 from rank_bm25 import BM25Okapi
 from rag.core.vector_db import returnchroma
 from langchain_core.documents import Document
+
+logger = logging.getLogger(__name__)
 
 _bm25_cache = {}
 
@@ -32,14 +36,14 @@ def build_bm25_index(subject_id: int):
 
 def get_bm25_index(subject_id: int):
     if subject_id not in _bm25_cache:
-        print("rebuilding")
+        logger.debug("bm25 index rebuild | subject=%s", subject_id)
         index = build_bm25_index(subject_id)
         if index[0] is None:
             # don't cache an empty corpus, or a later ingest never becomes searchable
             return index
         _bm25_cache[subject_id] = index
     else:
-        print("cache hit")
+        logger.debug("bm25 cache hit | subject=%s", subject_id)
     return _bm25_cache[subject_id]
 
 def invalidate_bm25_cache(subject_id: int):

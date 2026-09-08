@@ -1,3 +1,4 @@
+import logging
 import os
 
 import sqlalchemy
@@ -13,6 +14,8 @@ engine = sqlalchemy.create_engine(DATABASE_URL)
 sessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
+logger = logging.getLogger(__name__)
+
 def ensure_schema():
     """Idempotent column adds for tables that predate a model change.
 
@@ -27,4 +30,4 @@ def ensure_schema():
             try:
                 conn.execute(sqlalchemy.text(statement))
             except Exception as e:
-                print(f"schema check skipped ({statement}): {e}")
+                logger.debug("schema check skipped (%s): %s", statement, e)

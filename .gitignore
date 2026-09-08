@@ -16,3 +16,6 @@ credentials.json
 token.json
 /data
 
+
+# Logs
+/logs

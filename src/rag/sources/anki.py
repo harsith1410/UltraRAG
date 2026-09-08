@@ -1,8 +1,12 @@
+import logging
+
 import httpx
 
 ANKI_CONNECT_URL = "http://127.0.0.1:8765"
 ANKI_CONNECT_VERSION = 6
 DEFAULT_MODEL = "Basic"
+
+logger = logging.getLogger(__name__)
 
 
 class AnkiConnectError(Exception):
@@ -22,7 +26,9 @@ def invoke(action: str, **params):
 
     body = response.json()
     if body.get("error") is not None:
+        logger.warning("ankiconnect error | action=%s: %s", action, body["error"])
         raise AnkiConnectError(body["error"])
+    logger.debug("ankiconnect ok | action=%s", action)
     return body.get("result")
 
 

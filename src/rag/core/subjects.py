@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 
@@ -7,6 +8,8 @@ from rag.core.retrieval import invalidate_bm25_cache
 from rag.core.vector_db import returnchroma
 from rag.core.vision import IMAGE_DIR
 
+logger = logging.getLogger(__name__)
+
 
 def create_subject(name: str, gdrive_folder_id: str = None):
     db = sessionLocal()
@@ -15,9 +18,12 @@ def create_subject(name: str, gdrive_folder_id: str = None):
         db.add(instance)
         db.commit()
         db.refresh(instance)
+        logger.info("subject created | id=%s name=%s drive_folder=%s",
+                    instance.id, instance.name, instance.gdrive_folder_id or "-")
         return instance
-    except Exception:
+    except Exception as e:
         db.rollback()
+        logger.warning("subject create failed | name=%s: %s", name, e)
         return None
     finally:
         db.close()
@@ -37,8 +43,11 @@ def deleteSubject(id: int):
     try:
         subject = db.query(Subject).filter(Subject.id == id).first()
         if subject is None:
+            logger.warning("subject delete skipped, not found | id=%s", id)
             return None
 
+        doc_count = db.query(Documents).filter(Documents.subject_id == id).count()
+        logger.info("subject delete start | id=%s name=%s documents=%d", id, subject.name, doc_count)
         vs = returnchroma()
         vs._collection.delete(where={"subject_id": id})
 
@@ -46,10 +55,11 @@ def deleteSubject(id: int):
         db.delete(subject)
         db.commit()
         invalidate_bm25_cache(id)
+        logger.info("subject deleted | id=%s name=%s documents_removed=%d", id, subject.name, doc_count)
         return subject
     except Exception as e:
         db.rollback()
-        print(f"delete failed: {e}")
+        logger.exception("subject delete failed | id=%s: %s", id, e)
         return None
     finally:
         db.close()
@@ -64,7 +74,7 @@ def getDocuments(id: int):
             db.close()
             return documents
     except Exception as e:
-        print(f"Document Fetch failed: {e}")
+        logger.exception("document fetch failed | subject=%s: %s", id, e)
 
 
 def get_subject(id: int):
@@ -84,8 +94,11 @@ def delete_documents(doc_ids: list):
     try:
         docs = db.query(Documents).filter(Documents.id.in_(doc_ids)).all()
         if not docs:
+            logger.warning("document delete matched nothing | requested=%s", doc_ids)
             return {"deleted": 0, "filenames": []}
 
+        logger.info("document delete start | ids=%s files=%s",
+                    [d.id for d in docs], [d.filename for d in docs])
         vs = returnchroma()
         for doc in docs:
             # scope to the subject too: the same file can be ingested under several
@@ -94,6 +107,8 @@ def delete_documents(doc_ids: list):
                 {"subject_id": doc.subject_id},
                 {"file_hash": doc.file_hash},
             ]})
+            logger.debug("chroma chunks removed | file=%s subject=%s hash=%s",
+                         doc.filename, doc.subject_id, (doc.file_hash or "")[:8])
 
         filenames = [doc.filename for doc in docs]
         subject_ids = {doc.subject_id for doc in docs}
@@ -108,14 +123,19 @@ def delete_documents(doc_ids: list):
         for file_hash in hashes:
             if db.query(Documents).filter(Documents.file_hash == file_hash).first() is None:
                 shutil.rmtree(os.path.join(IMAGE_DIR, file_hash), ignore_errors=True)
+                logger.debug("figure folder removed | hash=%s", (file_hash or "")[:8])
+            else:
+                logger.debug("figure folder kept, still referenced | hash=%s", (file_hash or "")[:8])
 
         for subject_id in subject_ids:
             invalidate_bm25_cache(subject_id)
 
+        logger.info("document delete done | deleted=%d files=%s subjects=%s",
+                    len(docs), filenames, sorted(subject_ids))
         return {"deleted": len(docs), "filenames": filenames}
     except Exception as e:
         db.rollback()
-        print(f"document delete failed: {e}")
+        logger.exception("document delete failed | ids=%s: %s", doc_ids, e)
         return None
     finally:
         db.close()
