@@ -24,12 +24,9 @@ CONVERTERS = {
     '.docx': docx_to_markdown,
     '.pptx': pptx_to_markdown,
     '.md': _read_text,
-    '.markdown': _read_text,
-    '.txt': _read_text,
     '.png': process_image,
     '.jpg': process_image,
     '.jpeg': process_image,
-    '.webp': process_image,
 }
 
 # formats we can also pull embedded figures out of
@@ -38,7 +35,6 @@ IMAGE_CONVERTERS = {
     '.png': process_image_with_images,
     '.jpg': process_image_with_images,
     '.jpeg': process_image_with_images,
-    '.webp': process_image_with_images,
 }
 
 SUPPORTED_EXTENSIONS = sorted(CONVERTERS)

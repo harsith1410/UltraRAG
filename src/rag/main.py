@@ -8,19 +8,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from rag.core.chat import run_chat, generate_notes
-from rag.core.db import Base, engine
+from rag.core.db import Base, engine, ensure_schema
 from rag.core.dedupe import NearDuplicate
 from rag.core.flashcards import cards_to_tsv, generate_flashcards
 from rag.core.ingest import ingest
 from rag.core.models_db import Subject
-from rag.core.subjects import create_subject, listSubject, deleteSubject, getDocuments
+from rag.core.subjects import (
+    create_subject,
+    listSubject,
+    deleteSubject,
+    getDocuments,
+    get_subject,
+    delete_documents,
+)
 from rag.core.vision import IMAGE_DIR
 from rag.core.vector_db import returnchroma
 from rag.sources.anki import AnkiConnectError, add_cards, is_available, list_decks
 from rag.sources.calendar import create_event, list_events
 from rag.sources.converters import SUPPORTED_EXTENSIONS, UnsupportedFormat
 from rag.sources.drive import sync_drive_folder
-from rag.sources.web import UrlFetchError, save_url_as_markdown
 
 app = FastAPI()
 
@@ -32,6 +38,7 @@ app.add_middleware(
 )
 
 Base.metadata.create_all(bind=engine)
+ensure_schema()
 
 class ChatRequest(BaseModel):
     message: str
@@ -40,10 +47,12 @@ class ChatRequest(BaseModel):
 class NotesRequest(BaseModel):
     doc_ids: List[int]
 
-class UrlRequest(BaseModel):
-    url: str
-    subject_id: int
-    force: bool = False
+class SubjectRequest(BaseModel):
+    name: str
+    gdrive_folder_id: str | None = None
+
+class DeleteDocumentsRequest(BaseModel):
+    doc_ids: List[int]
 
 class EventRequest(BaseModel):
     summary: str
@@ -83,12 +92,17 @@ def near_duplicate_error(e: NearDuplicate) -> HTTPException:
 def main():
     return {"Health": "Good"}
 
-@app.post('/subject/{name}', status_code=status.HTTP_200_OK)
-def add_subject(name: str):
-    op = create_subject(name.upper())
+@app.post('/subject', status_code=status.HTTP_200_OK)
+def add_subject(body: SubjectRequest):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Subject name cannot be empty")
+
+    folder_id = (body.gdrive_folder_id or "").strip() or None
+    op = create_subject(name.upper(), folder_id)
     if op is None:
         raise HTTPException(status_code=409, detail="A subject with that name already exists")
-    return {"SubjectId": op.id}
+    return {"SubjectId": op.id, "name": op.name, "gdrive_folder_id": op.gdrive_folder_id}
 
 @app.get('/subject/', status_code=status.HTTP_200_OK)
 def list_subject():
@@ -106,6 +120,16 @@ def delete_subject(id: int):
     if op is None:
         raise HTTPException(status_code=404, detail="Subject not found")
     return {"Subject": op}
+
+@app.delete('/documents', status_code=status.HTTP_200_OK)
+def remove_documents(body: DeleteDocumentsRequest):
+    op = delete_documents(body.doc_ids)
+    if op is None:
+        raise HTTPException(status_code=500, detail="Could not delete those documents")
+    if op["deleted"] == 0:
+        raise HTTPException(status_code=404, detail="No matching documents found")
+    return op
+
 
 @app.post('/upload', status_code=status.HTTP_200_OK)
 async def ingest_file(file: UploadFile=File(), subject_id: int = Form(), force: bool = Form(False)):
@@ -130,23 +154,6 @@ async def ingest_file(file: UploadFile=File(), subject_id: int = Form(), force: 
 @app.get('/formats', status_code=status.HTTP_200_OK)
 def supported_formats():
     return {"extensions": SUPPORTED_EXTENSIONS}
-
-
-@app.post('/ingest/url', status_code=status.HTTP_200_OK)
-def ingest_url(body: UrlRequest):
-    try:
-        file_loc = save_url_as_markdown(body.url)
-    except UrlFetchError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    try:
-        success, chunk_count, figure_count = ingest(file_loc, body.subject_id, force=body.force)
-    except NearDuplicate as e:
-        raise near_duplicate_error(e)
-
-    if success:
-        return {"filename": os.path.basename(file_loc), "chunks": chunk_count, "figures": figure_count}
-    raise HTTPException(status_code=409, detail="This page has already been ingested")
 
 
 @app.get('/images/{file_hash}/{name}')
@@ -200,11 +207,16 @@ def notes(body: NotesRequest):
 
 @app.post('/drive/sync/{subject_id}')
 def drive_sync(subject_id: int):
-    folder_id = folder_map.get(subject_id)
-    if folder_id is None:
+    subject = get_subject(subject_id)
+    if subject is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+
+    # legacy fallback for subjects created before folder ids were stored on the row
+    folder_id = subject.gdrive_folder_id or folder_map.get(subject_id)
+    if not folder_id:
         raise HTTPException(
             status_code=400,
-            detail=f"No Drive folder mapped for subject {subject_id}. Add it to folder_map in main.py.",
+            detail=f"No Drive folder set for '{subject.name}'. Add one when creating the subject.",
         )
     results = sync_drive_folder(folder_id, subject_id)
     return {"synced": results}

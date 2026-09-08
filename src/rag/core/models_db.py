@@ -6,6 +6,7 @@ class Subject(Base):
     __tablename__ = "subjects"
     id = Column(Integer,primary_key=True)
     name = Column(String, unique=True)
+    gdrive_folder_id = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 class Documents(Base):

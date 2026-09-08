@@ -21,8 +21,6 @@ function App() {
   const [deckName, setDeckName] = useState('')
   const [ankiAvailable, setAnkiAvailable] = useState(null)
   const [pushMessage, setPushMessage] = useState(null)
-  const [urlValue, setUrlValue] = useState('')
-  const [isIngestingUrl, setIsIngestingUrl] = useState(false)
   const [uploadMessage, setUploadMessage] = useState(null)
   const [formats, setFormats] = useState([])
   const [duplicateWarning, setDuplicateWarning] = useState(null)
@@ -30,6 +28,10 @@ function App() {
   const [showCalendar, setShowCalendar] = useState(false)
   const [eventForm, setEventForm] = useState({ summary: '', start: '', end: '' })
   const [calendarMessage, setCalendarMessage] = useState(null)
+  const [newSubjectName, setNewSubjectName] = useState('')
+  const [newSubjectFolder, setNewSubjectFolder] = useState('')
+  const [isAddingSubject, setIsAddingSubject] = useState(false)
+  const [isDeletingDocs, setIsDeletingDocs] = useState(false)
   const messagesEndRef = useRef(null)
 
   useEffect(() => {
@@ -211,37 +213,75 @@ function App() {
     }
   }
 
-  async function handleIngestUrl(force = false) {
-    if (!urlValue.trim() || !selectedSubject || isIngestingUrl) {
-      if (!selectedSubject) flashUpload('Pick a subject first')
-      return
-    }
-    setIsIngestingUrl(true)
-    setDuplicateWarning(null)
+  function refreshSubjects() {
+    return fetch('http://127.0.0.1:8000/subject/')
+      .then(res => res.json())
+      .then(data => setSubjects(data.Subjects))
+      .catch(err => console.error('Fetch failed:', err))
+  }
 
+  async function handleAddSubject() {
+    const name = newSubjectName.trim()
+    if (!name || isAddingSubject) return
+
+    setIsAddingSubject(true)
     try {
-      const res = await fetch('http://127.0.0.1:8000/ingest/url', {
+      const res = await fetch('http://127.0.0.1:8000/subject', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: urlValue.trim(), subject_id: Number(selectedSubject), force })
+        body: JSON.stringify({ name, gdrive_folder_id: newSubjectFolder.trim() || null })
       })
       const data = await res.json()
       if (!res.ok) {
-        if (data.detail?.reason === 'near_duplicate') {
-          setDuplicateWarning({ ...data.detail, retry: () => handleIngestUrl(true) })
-          return
-        }
-        flashUpload(typeof data.detail === 'string' ? data.detail : 'URL ingest failed')
+        flashUpload(typeof data.detail === 'string' ? data.detail : 'Could not add subject')
         return
       }
-      flashUpload(ingestSummary(data))
-      setUrlValue('')
-      fetchDocuments(selectedSubject)
+      await refreshSubjects()
+      setSelectedSubject(String(data.SubjectId))
+      setNewSubjectName('')
+      setNewSubjectFolder('')
+      flashUpload(`Added ${data.name}${data.gdrive_folder_id ? ' with Drive folder' : ''}`)
     } catch (err) {
-      console.error('URL ingest failed:', err)
-      flashUpload('URL ingest failed')
+      console.error('Add subject failed:', err)
+      flashUpload('Could not add subject')
     } finally {
-      setIsIngestingUrl(false)
+      setIsAddingSubject(false)
+    }
+  }
+
+  async function handleDeleteDocuments() {
+    if (selectedDocIds.length === 0 || isDeletingDocs) return
+
+    const names = documents
+      .filter(doc => selectedDocIds.includes(doc.id))
+      .map(doc => displayName(doc.filename))
+    const confirmed = window.confirm(
+      `Delete ${names.length} document(s)? This removes their chunks from the index.\n\n${names.join('\n')}`
+    )
+    if (!confirmed) return
+
+    setIsDeletingDocs(true)
+    try {
+      const res = await fetch('http://127.0.0.1:8000/documents', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ doc_ids: selectedDocIds })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        flashUpload(typeof data.detail === 'string' ? data.detail : 'Delete failed')
+        return
+      }
+      setSelectedDocIds([])
+      setNotesResult(null)
+      setCardsResult(null)
+      fetchDocuments(selectedSubject)
+      flashUpload(`Deleted ${data.deleted} document(s)`)
+    } catch (err) {
+      console.error('Delete documents failed:', err)
+      flashUpload('Delete failed')
+    } finally {
+      setIsDeletingDocs(false)
     }
   }
 
@@ -447,6 +487,45 @@ function App() {
           </div>
         </div>
 
+        <div className="flex flex-col gap-2">
+          <label className={`text-sm font-medium ${isDark ? 'text-neutral-300' : 'text-slate-600'}`}>
+            Add subject
+          </label>
+          <input
+            value={newSubjectName}
+            onChange={(e) => setNewSubjectName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleAddSubject() }}
+            placeholder="Subject name"
+            className={`border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors ${
+                isDark
+                  ? 'bg-neutral-700 border-neutral-600 text-neutral-100 placeholder-neutral-500'
+                  : 'bg-white border-slate-300 text-slate-900'
+              }`}
+          />
+          <input
+            value={newSubjectFolder}
+            onChange={(e) => setNewSubjectFolder(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleAddSubject() }}
+            placeholder="Google Drive folder ID (optional)"
+            className={`border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors ${
+                isDark
+                  ? 'bg-neutral-700 border-neutral-600 text-neutral-100 placeholder-neutral-500'
+                  : 'bg-white border-slate-300 text-slate-900'
+              }`}
+          />
+          <button
+            onClick={handleAddSubject}
+            disabled={!newSubjectName.trim() || isAddingSubject}
+            className={`text-sm px-3 py-1.5 rounded-lg text-white transition self-start ${
+              isDark
+                ? 'bg-emerald-600 hover:bg-emerald-700 disabled:bg-neutral-700 disabled:text-neutral-500'
+                : 'bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400'
+            }`}
+          >
+            {isAddingSubject ? 'Adding...' : 'Add Subject'}
+          </button>
+        </div>
+
         <button
           onClick={() => setIsDark(prev => !prev)}
           className={`text-sm px-3 py-1.5 rounded-lg transition self-start ${
@@ -489,34 +568,6 @@ function App() {
             </p>
           )}
         </form>
-
-        <div className="flex flex-col gap-2">
-          <label className={`text-sm font-medium ${isDark ? 'text-neutral-300' : 'text-slate-600'}`}>
-            Ingest URL
-          </label>
-          <input
-            value={urlValue}
-            onChange={(e) => setUrlValue(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') handleIngestUrl(false) }}
-            placeholder="https://..."
-            className={`border rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition-colors ${
-              isDark
-                ? 'bg-neutral-700 border-neutral-600 text-neutral-100 placeholder-neutral-500'
-                : 'bg-white border-slate-300 text-slate-900'
-            }`}
-          />
-          <button
-            onClick={() => handleIngestUrl(false)}
-            disabled={!urlValue.trim() || !selectedSubject || isIngestingUrl}
-            className={`text-sm px-3 py-1.5 rounded-lg text-white transition self-start ${
-              isDark
-                ? 'bg-sky-600 hover:bg-sky-700 disabled:bg-neutral-700 disabled:text-neutral-500'
-                : 'bg-sky-600 hover:bg-sky-700 disabled:bg-slate-200 disabled:text-slate-400'
-            }`}
-          >
-            {isIngestingUrl ? 'Fetching...' : 'Fetch & Ingest'}
-          </button>
-        </div>
 
         {uploadMessage && (
           <p className={`text-xs ${isDark ? 'text-neutral-400' : 'text-slate-500'}`}>
@@ -663,7 +714,7 @@ function App() {
         {documents.length > 0 && (
           <div className="flex flex-col gap-2">
             <p className={`text-sm font-medium ${isDark ? 'text-neutral-300' : 'text-slate-600'}`}>
-              Select documents for notes
+              Documents ({documents.length} &middot; {selectedDocIds.length} selected)
             </p>
             {documents.map(doc => (
               <label
@@ -678,6 +729,17 @@ function App() {
                 {displayName(doc.filename)}
               </label>
             ))}
+            <button
+              onClick={handleDeleteDocuments}
+              disabled={selectedDocIds.length === 0 || isDeletingDocs}
+              className={`text-sm px-3 py-1.5 rounded-lg text-white transition self-start ${
+                isDark
+                  ? 'bg-red-600 hover:bg-red-700 disabled:bg-neutral-700 disabled:text-neutral-500'
+                  : 'bg-red-500 hover:bg-red-600 disabled:bg-slate-200 disabled:text-slate-400'
+              }`}
+            >
+              {isDeletingDocs ? 'Deleting...' : `Delete Selected${selectedDocIds.length ? ` (${selectedDocIds.length})` : ''}`}
+            </button>
             <button
               onClick={handleGenerateNotes}
               disabled={selectedDocIds.length === 0 || isGeneratingNotes}

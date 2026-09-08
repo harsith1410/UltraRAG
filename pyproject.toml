@@ -20,7 +20,6 @@ dependencies = [
     "langchain-ollama>=1.1.0",
     "langchain-text-splitters>=1.1.2",
     "langchain-voyageai>=0.4.0",
-    "markdownify>=1.2.3",
     "mistralai>=2.9.1",
     "psycopg2-binary>=2.9.12",
     "python-docx>=1.2.0",
