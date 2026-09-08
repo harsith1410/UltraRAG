@@ -11,18 +11,25 @@ from rag.core.models_db import Documents, Subject
 
 load_dotenv()
 
-def build_prompt(query: str, docs: list, history: list) -> tuple[str, list[dict]]:
+def build_prompt(query: str, docs: list, history: list) -> tuple[str, dict]:
 
-    citations = []
     context_texts = []
+    sources = []
+    figures = []
 
     for doc in docs:
-        citations.append({
-            "source": doc.metadata['source'],
-            "content": doc.page_content
-        })
+        source = doc.metadata.get('source', 'unknown')
+        if source not in sources:
+            sources.append(source)
 
-        context_texts.append(f"[Source: {doc.metadata['source']}]\n{doc.page_content}")
+        if doc.metadata.get('kind') == 'image':
+            figures.append({
+                "source": source,
+                "page": doc.metadata.get('page'),
+                "url": f"/images/{doc.metadata.get('file_hash')}/{doc.metadata.get('image_id')}",
+            })
+
+        context_texts.append(f"[Source: {source}]\n{doc.page_content}")
 
     context_str = "\n\n---\n\n".join(context_texts)
 
@@ -50,11 +57,7 @@ def build_prompt(query: str, docs: list, history: list) -> tuple[str, list[dict]
 
     prompt = template.format(context=context_str, history=history_str, query=query)
 
-    cite_sources = set()
-    for i in citations:
-        cite_sources.add(i.get('source'))
-
-    return (prompt, list(cite_sources))
+    return prompt, {"sources": sources, "figures": figures}
 
 async def stream_completion(prompt: str, model: str) -> AsyncGenerator[str, None]:
     client = groq.AsyncGroq()

@@ -14,8 +14,11 @@ def build_bm25_index(subject_id: int):
     vs = returnchroma()
     results = vs.get(where={"subject_id": subject_id})
 
-    texts = results["documents"]
-    metadatas = results["metadatas"]
+    texts = results["documents"] or []
+    metadatas = results["metadatas"] or []
+
+    if not texts:
+        return None, []
 
     tokenized = [tokenize(text) for text in texts]
     corpus = BM25Okapi(tokenized)
@@ -30,7 +33,11 @@ def build_bm25_index(subject_id: int):
 def get_bm25_index(subject_id: int):
     if subject_id not in _bm25_cache:
         print("rebuilding")
-        _bm25_cache[subject_id] = build_bm25_index(subject_id)
+        index = build_bm25_index(subject_id)
+        if index[0] is None:
+            # don't cache an empty corpus, or a later ingest never becomes searchable
+            return index
+        _bm25_cache[subject_id] = index
     else:
         print("cache hit")
     return _bm25_cache[subject_id]
@@ -40,6 +47,9 @@ def invalidate_bm25_cache(subject_id: int):
 
 def bm25_search(query: str, subject_id: int, k: int = 10):
     bm25, documents = get_bm25_index(subject_id)
+    if bm25 is None:
+        return []
+
     tokenized_query = tokenize(query)
     scores = bm25.get_scores(tokenized_query)
     ranked = sorted(zip(scores, documents), key=lambda x: x[0], reverse=True)

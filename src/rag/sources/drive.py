@@ -6,8 +6,10 @@ from googleapiclient.discovery import build
 import io
 from googleapiclient.http import MediaIoBaseDownload
 
+from rag.core.dedupe import NearDuplicate
 from rag.core.ingest import ingest
 from rag.core.models_db import Documents
+from rag.sources.converters import UnsupportedFormat
 
 creds = get_google_creds()
 drive_service = build('drive', 'v3', credentials=creds)
@@ -55,7 +57,17 @@ def sync_drive_folder(folder_id, subject_id):
     results = []
     for file in files:
         file_loc = download_drive_file(file)
-        success, chunk_count = ingest(file_loc, subject_id, gdrive_id=file['id'])
-        results.append({"name": file['name'], "success": success, "chunks": chunk_count})
+        try:
+            success, chunk_count, figure_count = ingest(file_loc, subject_id, gdrive_id=file['id'])
+        except (NearDuplicate, UnsupportedFormat) as e:
+            # one bad or duplicate file shouldn't abort the whole sync
+            results.append({"name": file['name'], "success": False, "chunks": None, "skipped": str(e)})
+            continue
+        results.append({
+            "name": file['name'],
+            "success": success,
+            "chunks": chunk_count,
+            "figures": figure_count,
+        })
     return results
 
